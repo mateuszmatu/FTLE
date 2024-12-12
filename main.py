@@ -1,5 +1,5 @@
 from ParticleAdvector import AdvectionBarentsEPS
-from LCS import FTLE
+from FTLE import FTLE
 import xarray as xr
 import numpy as np
 from joblib import Parallel, delayed
@@ -35,7 +35,7 @@ def CreateLCSField(lons, lats, ts, sep, dur, date, member, output, at_time=0):
     _mkdir(member)
     advector = AdvectionBarentsEPS(lons, lats, ts, sep, dur, date, at_time)
     outfile = advector.displace_one_member(member, output)
-    LCS = xr.open_dataset(FTLE(f'{output}.nc', f'{output}_LCS'))
+    ftle = xr.open_dataset(FTLE(f'{output}.nc', f'{output}_FTLE'))
     os.remove(f'{output}.nc')
 
 def Run(i, date, at_time=24):
