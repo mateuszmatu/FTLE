@@ -7,7 +7,7 @@ import xarray as xr
 import os
 
 
-def FTLE(DataArray, outfile=None, separation = None, duration=None, model=True, model_file = '/lustre/storeB/project/fou/hi/barents_eps/eps/barents_mean_20231018T06Z.nc', RLCS = False, show=False):
+def FTLE(DataArray, outfile=None, separation = None, duration=None, model=True, model_file = '/lustre/storeB/project/fou/hi/barents_eps/eps/barents_mean_20231018T06Z.nc', proj4='+proj=lcc +lat_0=77.5 +lon_0=-25 +lat_1=77.5 +lat_2=77.5 +no_defs +R=6.371e+06', RLCS = False, show=False):
     """
         Computes LCSs using the FTLE approach using the file from ParticleAdvector.py
         The function is tailored for attracting hyperbolic LCSs. If repelling LCSs are of interest, the resulting array needs to be reversed, i.e. RLCS[::-1, ::-1].
@@ -45,43 +45,53 @@ def FTLE(DataArray, outfile=None, separation = None, duration=None, model=True, 
             F[1,1] = (y1[i, j+1]-y1[i, j-1])/(2*sep)
             
             C = np.dot(np.transpose(F), F)
+
             try:
                 vals, vecs = np.linalg.eig(C)
             except:
-                vals, vecs = 0
+                vals = 0
             np.seterr(divide = 'ignore')
             ftle[i,j] = np.log(np.sqrt(np.max(vals)))/dur
     ftle[ftle==-inf]=np.nan
-
-    if RLCS is False:
-        ftle = ftle[::-1,::-1]
         
     if model is True:
         # It's important to have the correct file here for the projection
-        r = reader_netCDF_CF_generic.Reader(model_file)
+        r = reader_netCDF_CF_generic.Reader(model_file, proj4=proj4)
         x0, y0 = r.xy2lonlat(x0, y0)
-    
-    LCS = xr.Dataset(coords = dict(lon=(['x', 'y'], x0), lat=(['x','y'], y0)),
-                    data_vars = dict(ALCS=(['x', 'y'], ftle)))
 
+    if RLCS is False:
+        ftle = ftle[::-1,::-1]
+        LCS = xr.Dataset(coords = dict(lon=(['x', 'y'], x0), lat=(['x','y'], y0)),
+                    data_vars = dict(ALCS=(['x', 'y'], ftle)))
+    elif RLCS is True:
+        LCS = xr.Dataset(coords = dict(lon=(['x', 'y'], x0), lat=(['x','y'], y0)),
+                    data_vars = dict(RLCS=(['x', 'y'], ftle)))
+        
     if outfile is not None:
         LCS.to_netcdf(f'{outfile}.nc')
 
     if show is True:
-        alcs = np.array(LCS.ALCS)
-        alcs[alcs>0.25] = 1
-        alcs[alcs<0.25] = np.nan
-        plt.pcolormesh(LCS.lon, LCS.lat, alcs, vmin = 0, vmax=1, cmap='Greys')
+        rlcs = np.array(LCS.ALCS)
+        from opendrift.readers import reader_double_gyre
+        double_gyre = reader_double_gyre.Reader(epsilon=0.25, omega=0.582, A=0.1)
+        plt.figure(dpi=300)
+        plt.pcolormesh(LCS.lon, LCS.lat, rlcs, cmap='Reds')
         plt.colorbar()
+        colors = ['Blue', 'Black']
+        labels = ['Start', 'End']
+        for i in [0,-1]:
+            pos = xr.open_dataset('shear_particles.nc').isel(time=i)
+            posx, posy = double_gyre.proj(pos.lon, pos.lat)
+            plt.scatter(posx, posy, s = 1, color=colors[i], label=labels[i])
+        plt.legend()
         plt.show()
 
     return LCS
 
-
 if __name__ == '__main__':
-    from ParticleAdvector import DoubleGyre#Advection
-    from datetime import datetime, timedelta
+    ftle = FTLE(xr.open_dataset('double_gyre_particles.nc'), model=False, outfile='dg_test')
+    plt.pcolormesh(ftle.lon, ftle.lat, ftle.ALCS)
+    plt.show()
 
-    t = DoubleGyre()
-    DG = t.run()
-    LCS = FTLE(DG, model=False, show=True)
+
+    
