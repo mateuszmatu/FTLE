@@ -12,7 +12,7 @@ import os
 from opendrift.readers import reader_double_gyre
 
 class Advection:
-    def __init__(self, file, lons, lats, ts, sep, dur, start):
+    def __init__(self, file, lons, lats, ts, sep, dur, start, proj4='+proj=lcc +lat_0=77.5 +lon_0=-25 +lat_1=77.5 +lat_2=77.5 +no_defs +R=6.371e+06'):
         '''
         Args:
             DataArray   (xr.DataArray)  :   A file containing the model data.
@@ -30,16 +30,21 @@ class Advection:
         self.sep = sep
         self.dur = dur
         self.start = start
+        self.proj4 = proj4
     
-    def run(self, outfile = None, ensemble_member=None):
+    def run(self, outfile = None, ensemble_member=None, z=0):
         o = OceanDrift(loglevel=20)
         try:
-            r = reader_netCDF_CF_generic.Reader(self.file, ensemble_member=ensemble_member)
+            r = reader_netCDF_CF_generic.Reader(self.file, ensemble_member=ensemble_member, proj4=self.proj4)
+            print('Loaded reader')
         except:
             pass
             #r = reader_ROMS_native.Reader(self.file)
         o.set_config('drift:advection_scheme', 'runge-kutta4')
         o.set_config('drift:vertical_mixing', False)
+        o.set_config('seed:ocean_only', False)
+        o.set_config('general:coastline_action', 'none')
+        o.set_config('drift:vertical_advection', False)
         o.add_reader(r)
 
         x,y = r.lonlat2xy(self.lons, self.lats)
@@ -54,11 +59,11 @@ class Advection:
         X, Y = np.meshgrid(c1, c2)
   
         lons, lats = r.xy2lonlat(X.flatten(), Y.flatten())
-
-        o.seed_elements(lons.ravel(), lats.ravel(), time=r.start_time+self.start)
+        #remember to change Z
+        o.seed_elements(lons.ravel(), lats.ravel(), time=self.start, z=z)
         o.run(duration=timedelta(hours=self.dur), time_step=timedelta(seconds=self.ts), time_step_output=timedelta(hours=self.dur))
         lons, lats = np.reshape(lons, (X.shape[0], X.shape[1])), np.reshape(lats, (X.shape[0], X.shape[1]))
-        f_x1, f_y1 = r.lonlat2xy(o.history['lon'].T[-1], o.history['lat'].T[-1])
+        f_x1, f_y1 = r.lonlat2xy(o.result['lon'].T[-1], o.result['lat'].T[-1])
 
 
         ds = xr.Dataset(coords=dict(lon = (['x', 'y'], X),
@@ -117,7 +122,7 @@ class DoubleGyre:
         o.seed_elements(lons.ravel(), lats.ravel(),
                             time=double_gyre.initial_time+timedelta(seconds=self.at))
         o.run(duration=timedelta(seconds=self.dur), time_step=self.ts, time_step_output=self.dur, outfile=f'{self.outfile}.nc')
-        f_x1, f_y1 = proj(o.history['lon'].T[-1], o.history['lat'].T[-1])
+        f_x1, f_y1 = proj(o.result['lon'].T[-1], o.result['lat'].T[-1])
         string = self.outfile
 
         d = xr.open_dataset(f'{string}.nc')
@@ -126,8 +131,25 @@ class DoubleGyre:
                                 lat = (['x','y'], Y)),
                         data_vars=dict(separation=self.sep, duration=self.dur, nlon=f_x1, nlat=f_y1))
 
-        #ds.to_netcdf(f'{string}.nc')
+        ds.to_netcdf(f'double_gyre_particles.nc')
         return ds
+
+    def particles(self):
+        o = OceanDrift(loglevel=20)
+        o.set_config('environment:fallback:land_binary_mask', 0)
+        o.set_config('drift:advection_scheme', 'runge-kutta4')
+        double_gyre = reader_double_gyre.Reader(epsilon=self.eps, omega=self.om, A=self.A)
+        o.add_reader(double_gyre)
+        lon, lat = double_gyre.xy2lonlat(-5, 0)
+        
+        o.seed_elements(lon,lat,number=10000, radius=1,
+                            time=double_gyre.initial_time)
+        o.run(duration=timedelta(seconds=3), time_step=0.5, outfile='double_gyre_particles.nc')
+
+if __name__ == '__main__':
+    test = DoubleGyre()
+    test.run()
+    
 
 
 
